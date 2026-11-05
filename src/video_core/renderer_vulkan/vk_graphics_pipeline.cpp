@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -2026,6 +2028,34 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         flags |= VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
     }
 
+    // Local diagnostics (oot-amd build): name every pipeline before the driver compiles it, so a
+    // driver crash inside vkCreateGraphicsPipelines can be traced to its shaders, and let
+    // LOCAL_SKIP_PIPELINE=<unique hash>,... skip such a pipeline (handled like a failed build).
+    {
+        const auto& h = key.unique_hashes;
+        static const std::string skip_list = [] {
+            const char* text = std::getenv("LOCAL_SKIP_PIPELINE");
+            std::string list = text ? "," + std::string{text} + "," : std::string{};
+            for (char& c : list) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return list;
+        }();
+        for (const u64 hash : h) {
+            if (hash != 0 && !skip_list.empty() &&
+                skip_list.find(fmt::format(",{:016x},", hash)) != std::string::npos) {
+                std::fprintf(stderr, "[pipe-skip] %016llx (LOCAL_SKIP_PIPELINE)\n",
+                             static_cast<unsigned long long>(hash));
+                std::fflush(stderr);
+                throw vk::Exception(VK_ERROR_UNKNOWN);
+            }
+        }
+        std::fprintf(stderr, "[pipe-build] %016llx %016llx %016llx %016llx %016llx %016llx\n",
+                     static_cast<unsigned long long>(h[0]), static_cast<unsigned long long>(h[1]),
+                     static_cast<unsigned long long>(h[2]), static_cast<unsigned long long>(h[3]),
+                     static_cast<unsigned long long>(h[4]), static_cast<unsigned long long>(h[5]));
+        std::fflush(stderr);
+    }
     const bool unoptimized = (flags & VK_PIPELINE_CREATE_DISABLE_OPTIMIZATION_BIT) != 0;
     const auto trace_begin = std::chrono::steady_clock::now();
     TracePipelineBuild("BEGIN", "graphics", key.Hash(), key.unique_hashes, unoptimized);
@@ -2061,6 +2091,9 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
                        std::chrono::duration<double, std::milli>(
                            std::chrono::steady_clock::now() - trace_begin)
                            .count());
+
+    std::fprintf(stderr, "[pipe-done] %016llx\n", static_cast<unsigned long long>(key.unique_hashes[4]));
+    std::fflush(stderr);
 
     // Log graphics pipeline creation
     if (GPU::Logging::IsActive()) {
