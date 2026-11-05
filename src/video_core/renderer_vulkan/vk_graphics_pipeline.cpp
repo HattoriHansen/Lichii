@@ -2041,6 +2041,14 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
             }
             return list;
         }();
+        // A "<vertex B>+<fragment>" entry skips only that pair of shaders.
+        const std::string pair = fmt::format(",{:016x}+{:016x},", h[1], h[5]);
+        if (!skip_list.empty() && skip_list.find(pair) != std::string::npos) {
+            std::fprintf(stderr, "[pipe-skip] %016llx+%016llx (LOCAL_SKIP_PIPELINE)\n",
+                         static_cast<unsigned long long>(h[1]), static_cast<unsigned long long>(h[5]));
+            std::fflush(stderr);
+            throw vk::Exception(VK_ERROR_UNKNOWN);
+        }
         for (const u64 hash : h) {
             if (hash != 0 && !skip_list.empty() &&
                 skip_list.find(fmt::format(",{:016x},", hash)) != std::string::npos) {
