@@ -2686,7 +2686,17 @@ void RasterizerVulkan::WaitForIdle() {
 void RasterizerVulkan::FragmentBarrier() {
     // The next draw breaks the render pass only if it reads what this one wrote (#161): Ocarina
     // ended ~5,900 render passes a second here.
-    scheduler.DeferFragmentBarrier();
+    // Local build: deferral can show flickering layers on RADV. Keep the immediate barrier
+    // outside MoltenVK unless LOCAL_DEFER_FRAGMENT_BARRIER=1 asks for the deferred one.
+    static const bool defer = [] {
+        const char* value = std::getenv("LOCAL_DEFER_FRAGMENT_BARRIER");
+        return value != nullptr && value[0] == '1';
+    }();
+    if (defer || device.IsMoltenVK()) {
+        scheduler.DeferFragmentBarrier();
+        return;
+    }
+    scheduler.RequestOutsideRenderPassOperationContext();
 }
 
 void RasterizerVulkan::TiledCacheBarrier() {
