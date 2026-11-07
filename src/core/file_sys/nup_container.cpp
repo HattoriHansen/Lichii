@@ -4,6 +4,7 @@
 #include "core/file_sys/nup_container.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
@@ -224,7 +225,8 @@ struct NupDecompressCache {
     std::filesystem::path spill_dir;
 
     bool Spills(u64 size) const {
-        return size > cap / 2;
+        // local: members over 256 MiB spill even with a raised EDEN_NUP_CACHE_MIB cap.
+        return size > std::min(cap, NupContainer::DefaultCacheCap) / 2;
     }
 
     std::shared_ptr<NupMember> Get(std::size_t file_index, u64 size) {
@@ -533,6 +535,18 @@ NupContainer::NupContainer(VirtualFile file_, std::size_t memory_cache_cap,
                            std::filesystem::path spill_dir_)
     : file(std::move(file_)), cache(std::make_shared<NupDecompressCache>()) {
     cache->cap = memory_cache_cap;
+    // sergio: hosts with plenty of RAM can keep far more decompressed members, so area changes
+    // stop re-running zstd on files the 512 MiB default evicted. EDEN_NUP_CACHE_MIB raises it
+    // (e.g. 6144); the default stays 512 MiB.
+    if (memory_cache_cap == DefaultCacheCap) {
+        if (const char* v = std::getenv("EDEN_NUP_CACHE_MIB"); v != nullptr && v[0] != 0) {
+            const auto mib = static_cast<std::size_t>(std::strtoull(v, nullptr, 10));
+            if (mib >= 64) {
+                cache->cap = mib * 1024 * 1024;
+            }
+            LOG_INFO(Loader, "NUP decompression cache: {} MiB", cache->cap / (1024 * 1024));
+        }
+    }
     cache->spill_dir = spill_dir_.empty()
                            ? Common::FS::GetEdenPath(Common::FS::EdenPath::CacheDir) / "nup"
                            : std::move(spill_dir_);
